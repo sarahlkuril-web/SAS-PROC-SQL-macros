@@ -1,0 +1,69 @@
+/* Macro to standardize ACS tables */
+%macro clean_acs(in_table=, out_table=, indicator=);
+
+proc sql;
+    create table work.&out_table as
+    select
+        variable as category,
+        substr(name, 7) as ZCTA,
+        "&indicator" as INDICATOR,
+        estimate as ESTIMATE
+    from work.&in_table;
+quit;
+
+%mend;
+
+
+/* Apply macro to all ACS source tables */
+%clean_acs(in_table=agesex,            out_table=agesex_clean,            indicator=AGE_GENDER_GROUP);
+%clean_acs(in_table=race,              out_table=race_clean,              indicator=RACE_GROUP);
+%clean_acs(in_table=ethnicity,         out_table=ethnicity_clean,         indicator=ETHNICITY_GROUP);
+%clean_acs(in_table=fpl,               out_table=fpl_clean,               indicator=FPL_GROUP);
+%clean_acs(in_table=healthinscoverage, out_table=healthinscoverage_clean, indicator=INSURANCE_TYPE_GROUP);
+%clean_acs(in_table=language,          out_table=language_clean,          indicator=LANGUAGE_GROUP);
+
+
+/* Append all cleaned tables */
+proc sql;
+    create table work.census_clean as
+    select * from work.agesex_clean
+    union all
+    select * from work.race_clean
+    union all
+    select * from work.ethnicity_clean
+    union all
+    select * from work.fpl_clean
+    union all
+    select * from work.healthinscoverage_clean
+    union all
+    select * from work.language_clean;
+quit;
+
+
+/* Filter ZIP-to-ZCTA crosswalk */
+proc sql;
+    create table work.zip_filtered as
+    select *
+    from work.ziptozcta
+    where state in ('CA','DC','MD','VA','PA');
+quit;
+
+
+/* Final merge */
+proc sql;
+    create table work.census_final as
+    select
+        c.*,
+        z.state,
+        'CensusDataset' as DATA_STREAM,
+        case
+            when z.state = 'CA' then 'CA Coalition'
+            when z.state = 'DC' then 'DC Coalition'
+            else ''
+        end as COALITION
+    from work.census_clean as c
+    left join work.zip_filtered as z
+        on c.ZCTA = z.zcta
+    where not missing(c.ZCTA)
+      and not missing(c.ESTIMATE);
+quit;
